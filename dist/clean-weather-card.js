@@ -1185,7 +1185,7 @@ ha-icon { color: inherit; display:inline-flex; align-items:center; justify-conte
 .nm { color: var(--secondary-text-color); }
 .today .nm { color: var(--primary-text-color); }
 .ic { width:30px; }
-.tx { width:7.4em; font-size:1.15em; }
+.tx { width:6.6em; font-size:1.15em; }
 .tx b { font-size:1.05em; }
 .tx .cmp { display:none; }
 .rg { flex:1 1 130px; gap:8px; font-size:1.1em; }
@@ -1200,12 +1200,13 @@ ha-icon { color: inherit; display:inline-flex; align-items:center; justify-conte
 .wx { gap:2px; color: var(--secondary-text-color); }
 .wx b { color: var(--primary-text-color); font-size:.95em; }
 .wx .wic { width:22px; height:22px; --mdc-icon-size:22px; }
+.wx .arrow { margin-left:3px; }
 .wx.w2 .wic { color: var(--cwc-warn); }
 .wx.w3 .wic { color: var(--cwc-alert); }
 .wide1 { width:26px; }
-.wide2 { width:7.2em; }
-.wide3 { width:9.8em; }
-.ex { width:5.8em; justify-content:flex-end; gap:3px; font-size:1.05em; }
+.wide2 { width:6.2em; }
+.wide3 { width:8.9em; }
+.ex { width:5em; justify-content:flex-end; gap:3px; font-size:1.05em; }
 .ex small, .pv small { font-size:.75em; }
 .g { color: var(--secondary-text-color); }
 @container (max-width: 270px) {
