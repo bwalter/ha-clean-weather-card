@@ -313,8 +313,18 @@ const ICONS = {
 
 /** Hourly columns can also show "temperature + feels like". */
 const HOURLY_ATTRIBUTES = ["temperature", "temperature_feels", ...ATTRIBUTES.slice(1)];
-/** Attributes of the current weather that can be overridden by a user sensor (`<attribute>_sensor`). */
+/** Attributes of the current weather that can be overridden by a user sensor (config: `sensors: { <attribute>: sensor.x }`). */
 const SENSOR_KEYS = ["temperature", "precipitation", "humidity", "wind_speed", "wind_gust_speed", "wind_bearing", "pressure", "dew_point", "uv_index", "visibility", "cloud_coverage"];
+/** The `sensors` group of a config; the old flat `<attribute>_sensor` keys are still read. Only entity ids are kept. */
+function normalizeSensors(config) {
+  const out = {};
+  SENSOR_KEYS.forEach((k) => {
+    const v = config?.sensors?.[k] ?? config?.[`${k}_sensor`];
+    if (typeof v === "string" && v.includes(".")) out[k] = v;
+  });
+  return out;
+}
+
 const DAILY_ATTRIBUTES = ATTRIBUTES.filter((a) => a !== "temperature");
 /** Shortcuts show the current state: no temperature (shown large already) and no precipitation amount. */
 const SHORTCUT_ATTRIBUTES = DAILY_ATTRIBUTES.filter((a) => a !== "precipitation");
@@ -631,8 +641,7 @@ class CleanWeatherCard extends HTMLElement {
       wind: opt(d.wind, ["icon", "value", "gust", "none"], "icon"),
       attributes: normalizeAttributes(config.daily),
     };
-    const sensors = Object.fromEntries(SENSOR_KEYS.map((k) => [`${k}_sensor`, typeof config[`${k}_sensor`] === "string" && config[`${k}_sensor`].includes(".") ? config[`${k}_sensor`] : ""]));
-    this._config = { entity: config.entity, title: config.title || "", ...sensors, icon_size: clamp(Math.round(num(config.icon_size) ?? DEFAULTS.icon_size), 20, 100), shortcuts_display: oneOf(config.shortcuts_display, ["icon", "icon_label", "label"], "icon"), shortcuts: normalizeList(config.shortcuts, SHORTCUT_ATTRIBUTES, DEFAULTS.shortcuts), hourly, daily };
+    this._config = { entity: config.entity, title: config.title || "", sensors: normalizeSensors(config), icon_size: clamp(Math.round(num(config.icon_size) ?? DEFAULTS.icon_size), 20, 100), shortcuts_display: oneOf(config.shortcuts_display, ["icon", "icon_label", "label"], "icon"), shortcuts: normalizeList(config.shortcuts, SHORTCUT_ATTRIBUTES, DEFAULTS.shortcuts), hourly, daily };
     this._ensureSubscribed(true);
     this._render();
   }
@@ -642,7 +651,7 @@ class CleanWeatherCard extends HTMLElement {
     if (!this._config) return;
     const st = hass.states[this._config.entity];
     // the optional override sensors also trigger a re-render when they change
-    const sensors = SENSOR_KEYS.map((k) => (this._config[`${k}_sensor`] ? hass.states[this._config[`${k}_sensor`]] : null));
+    const sensors = SENSOR_KEYS.map((k) => (this._config.sensors[k] ? hass.states[this._config.sensors[k]] : null));
     const sensorsChanged = sensors.some((x, i) => x !== (this._sensorStates || [])[i]);
     this._sensorStates = sensors;
     if (st !== this._stateObj) {
@@ -811,9 +820,9 @@ class CleanWeatherCard extends HTMLElement {
     const cur = hourly.find((h) => Math.abs(new Date(h.datetime) - now) <= 30 * 60 * 1000) ||
       hourly.find((h) => new Date(h.datetime) <= now && now - new Date(h.datetime) < 3600e3);
 
-    // Optional user sensors (<attribute>_sensor) override the current values, converted to the weather entity's units
+    // Optional user sensors (`sensors:`) override the current values, converted to the weather entity's units
     const sensorState = (key) => {
-      const e = cfg[`${key}_sensor`];
+      const e = cfg.sensors[key];
       return e ? hass.states[e] || null : null;
     };
     const sens = (key, conv) => {
@@ -1297,23 +1306,7 @@ ha-icon { color: inherit; display:inline-flex; align-items:center; justify-conte
 /* Visual editor                                                       */
 /* ------------------------------------------------------------------ */
 
-const EDITOR_HELPERS = {
-  temperature_sensor: "Replaces the current temperature (and the computed feels-like), e.g. your outdoor sensor.",
-  precipitation_sensor: "Rain rate (mm/h) or last-hour amount. Sets the drops of the current weather icon. Running totals are ignored.",
-};
-
 const EDITOR_LABELS = {
-  temperature_sensor: "Temperature sensor",
-  precipitation_sensor: "Rain sensor",
-  humidity_sensor: "Humidity sensor",
-  wind_speed_sensor: "Wind speed sensor",
-  wind_gust_speed_sensor: "Wind gust sensor",
-  wind_bearing_sensor: "Wind direction sensor",
-  pressure_sensor: "Pressure sensor",
-  dew_point_sensor: "Dew point sensor",
-  uv_index_sensor: "UV index sensor",
-  visibility_sensor: "Visibility sensor",
-  cloud_coverage_sensor: "Cloud cover sensor",
   entity: "Weather entity",
   title: "Title (optional)",
   enabled: "Enabled",
@@ -1356,6 +1349,8 @@ const opts = (list, withNone) => [
   ...(withNone ? [{ value: "none", label: "Disabled" }] : []),
 ];
 const slider = (name, min, max) => ({ name, selector: { number: { min, max, step: 1, mode: "slider" } } });
+/** Entity picker of the `sensors` group; label and helper text live on the item (names like "temperature" are also used elsewhere). */
+const sensor = (name, label, filter = {}, helper = "") => ({ name, cwcLabel: label, cwcHelper: helper, selector: { entity: { domain: "sensor", ...filter } } });
 const select = (name, options, required = false) => ({ name, required, selector: { select: { mode: "dropdown", options } } });
 
 const EDITOR_SCHEMA = [
@@ -1367,18 +1362,20 @@ const EDITOR_SCHEMA = [
     ],
   },
   {
-    type: "expandable", name: "", title: "Sensors (optional)", icon: "mdi:gauge", schema: [
-      { name: "temperature_sensor", selector: { entity: { domain: "sensor", device_class: "temperature" } } },
-      { name: "precipitation_sensor", selector: { entity: { domain: "sensor", device_class: ["precipitation", "precipitation_intensity"] } } },
-      { name: "humidity_sensor", selector: { entity: { domain: "sensor", device_class: "humidity" } } },
-      { name: "wind_speed_sensor", selector: { entity: { domain: "sensor", device_class: "wind_speed" } } },
-      { name: "wind_gust_speed_sensor", selector: { entity: { domain: "sensor", device_class: "wind_speed" } } },
-      { name: "wind_bearing_sensor", selector: { entity: { domain: "sensor" } } },
-      { name: "pressure_sensor", selector: { entity: { domain: "sensor", device_class: ["pressure", "atmospheric_pressure"] } } },
-      { name: "dew_point_sensor", selector: { entity: { domain: "sensor", device_class: "temperature" } } },
-      { name: "uv_index_sensor", selector: { entity: { domain: "sensor" } } },
-      { name: "visibility_sensor", selector: { entity: { domain: "sensor", device_class: "distance" } } },
-      { name: "cloud_coverage_sensor", selector: { entity: { domain: "sensor" } } },
+    type: "expandable", name: "sensors", title: "Sensors (optional)", icon: "mdi:gauge", schema: [
+      sensor("temperature", "Temperature sensor", { device_class: "temperature" },
+        "Replaces the current temperature (and the computed feels-like), e.g. your outdoor sensor."),
+      sensor("precipitation", "Rain sensor", { device_class: ["precipitation", "precipitation_intensity"] },
+        "Rain rate (mm/h) or last-hour amount. Sets the drops of the current weather icon. Running totals are ignored."),
+      sensor("humidity", "Humidity sensor", { device_class: "humidity" }),
+      sensor("wind_speed", "Wind speed sensor", { device_class: "wind_speed" }),
+      sensor("wind_gust_speed", "Wind gust sensor", { device_class: "wind_speed" }),
+      sensor("wind_bearing", "Wind direction sensor"),
+      sensor("pressure", "Pressure sensor", { device_class: ["pressure", "atmospheric_pressure"] }),
+      sensor("dew_point", "Dew point sensor", { device_class: "temperature" }),
+      sensor("uv_index", "UV index sensor"),
+      sensor("visibility", "Visibility sensor", { device_class: "distance" }),
+      sensor("cloud_coverage", "Cloud cover sensor"),
     ],
   },
   {
@@ -1448,8 +1445,8 @@ class CleanWeatherCardEditor extends HTMLElement {
   _render() {
     if (!this._form) {
       this._form = document.createElement("ha-form");
-      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
-      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name] || "";
+      this._form.computeLabel = (s) => s.cwcLabel || EDITOR_LABELS[s.name] || s.name;
+      this._form.computeHelper = (s) => s.cwcHelper || "";
       this._form.addEventListener("value-changed", (ev) => {
         const config = { ...ev.detail.value };
         // An emptied (cleared) option means "disabled"; the default only applies to options that were never set.
@@ -1462,6 +1459,9 @@ class CleanWeatherCardEditor extends HTMLElement {
         fix("daily", ["temperature", "precipitation", "wind"]);
         if (!Array.isArray(config.daily.attributes)) config.daily.attributes = [];
         if (!Array.isArray(config.shortcuts)) config.shortcuts = [];
+        // cleared sensor pickers are dropped; the group disappears when empty
+        config.sensors = normalizeSensors({ sensors: config.sensors });
+        if (!Object.keys(config.sensors).length) delete config.sensors;
         if (!config.hourly.main) config.hourly.main = DEFAULTS.hourly.main;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
       });
@@ -1475,9 +1475,11 @@ class CleanWeatherCardEditor extends HTMLElement {
       icon_size: c.icon_size ?? DEFAULTS.icon_size,
       shortcuts_display: c.shortcuts_display || DEFAULTS.shortcuts_display,
       shortcuts: normalizeList(c.shortcuts, SHORTCUT_ATTRIBUTES, DEFAULTS.shortcuts),
+      sensors: normalizeSensors(c),
       hourly: { ...DEFAULTS.hourly, ...(c.hourly || {}) },
       daily: { ...DEFAULTS.daily, ...(c.daily || {}), attributes: normalizeAttributes(c.daily) },
     };
+    SENSOR_KEYS.forEach((k) => delete this._form.data[`${k}_sensor`]); // old flat keys are migrated into `sensors`
     delete this._form.data.daily.extra_1;
     delete this._form.data.daily.extra_2;
   }
