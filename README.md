@@ -137,7 +137,7 @@ The card follows your theme. Weather icons use the theme's secondary text color;
 - Wind warning level per day from the strongest gust: 1 from 50 km/h, 2 from 65 km/h, 3 from 90 km/h.
 - Gust line shown when gusts are at least 40 km/h or 1.5 times the wind speed.
 - Rain probability shown from 10 % (rounded to 5 %).
-- Rain drops: hourly columns use the average rate (mm/h) over the hours they cover: 1 drop below 2.5 mm/h, 2 below 10, 3 below 15, downpour above (the DWD thresholds for light, strong rain and downpour warnings). Daily rows use the day total: 1 drop below 5 mm, 2 below 10, 3 below 20, downpour above. 2 drops if the amount is unknown.
+- Rain drops: daily rows use the day total: 1 drop below 2.5 mm, 2 below 10, 3 below 15, downpour above. Hourly columns use a rate in mm/h: the midpoint of the peak and the average of the hours they cover, so a shower is not averaged away in a longer interval: 1 drop below 0.5 mm/h, 2 below 2, 3 below 4, downpour above (based on the WMO / Met Office scale: slight below 0.5, moderate up to 4, heavy above). 2 drops if the amount is unknown.
 - Forecasts are kept while the card is re-created, so icons do not flash on reload of the view.
 - Missing forecast data is shown as `–`.
 

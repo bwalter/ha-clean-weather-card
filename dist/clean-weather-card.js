@@ -417,9 +417,17 @@ function bearingDeg(v) {
 }
 
 /** Rain level 1..4 (4 = downpour). Unknown amount -> 2 drops. `perDay` uses daily thresholds. */
+/**
+ * Rain drop thresholds. Day total (mm): 1 drop below 2.5, 2 below 10, 3 below 15, downpour above.
+ * Hourly rate (mm/h), independent of the column interval: the WMO / Met Office scale (slight < 0.5,
+ * moderate 0.5-4, heavy > 4), with the moderate range split in two: 1 drop below 0.5, 2 below 2, 3 below 4, downpour above.
+ */
+const DAY_RAIN = [2.5, 10, 15];
+const HOUR_RAIN = [0.5, 2, 4];
+
 function rainLevel(mm, perDay) {
   if (mm === null || mm === undefined) return 2;
-  const t = perDay ? [5, 10, 20] : [2.5, 10, 15]; // hourly: DWD light < 2.5, strong from 10 mm/h, downpour warning from 15 mm/h
+  const t = perDay ? DAY_RAIN : HOUR_RAIN;
   if (mm < t[0]) return 1;
   if (mm < t[1]) return 2;
   if (mm < t[2]) return 3;
@@ -820,12 +828,13 @@ class CleanWeatherCard extends HTMLElement {
         const v = attrValue(key, entry, ctx);
         return v === null ? null : attrFormat(key, v, ctx);
       };
-      // Rain of the column: average hourly amount over the hours it covers (so a 2 h column is not under-counted)
+      // Rain of the column: midpoint of the peak and the average hourly rate over the hours it covers
+      // (the peak alone would let one wet hour dominate a long interval, the average alone hides a shower)
       const covered = hourly
         .filter((x) => { const t = new Date(x.datetime).getTime(); return t >= at.getTime() - 1800e3 && t < at.getTime() + h.interval * 3600e3 - 1800e3; })
         .map((x) => num(x.precipitation))
         .filter((v) => v !== null);
-      const hourMm = covered.length ? covered.reduce((a, b) => a + b, 0) / covered.length : null;
+      const hourMm = covered.length ? (Math.max(...covered) + covered.reduce((a, b) => a + b, 0) / covered.length) / 2 : null;
       cols.push({
         label,
         cond: entry ? entry.condition || "unknown" : "unknown",
