@@ -419,7 +419,7 @@ function bearingDeg(v) {
 /** Rain level 1..4 (4 = downpour). Unknown amount -> 2 drops. `perDay` uses daily thresholds. */
 function rainLevel(mm, perDay) {
   if (mm === null || mm === undefined) return 2;
-  const t = perDay ? [5, 10, 20] : [2.5, 7.5, 15];
+  const t = perDay ? [5, 10, 20] : [2.5, 10, 15]; // hourly: DWD light < 2.5, strong from 10 mm/h, downpour warning from 15 mm/h
   if (mm < t[0]) return 1;
   if (mm < t[1]) return 2;
   if (mm < t[2]) return 3;
@@ -1131,7 +1131,7 @@ class CleanWeatherCard extends HTMLElement {
 }
 
 const STYLE = `
-:host { --cwc-rain: #3b8fd9; --cwc-accent: var(--cwc-attr-color, #3b8fd9); --cwc-warn: #f0a030; --cwc-alert: #e0453a; --cwc-icon: var(--cwc-icon-color, var(--secondary-text-color)); display:block; }
+:host { --cwc-rain: #3b8fd9; --cwc-accent: var(--cwc-attr-color, #3b8fd9); --cwc-warn: #f0a030; --cwc-alert: #e0453a; --cwc-icon: var(--cwc-icon-color, color-mix(in srgb, var(--primary-text-color) 40%, var(--ha-card-background, var(--card-background-color, #fff)))); display:block; }
 ha-card { padding: 16px; color: var(--primary-text-color); }
 .empty { padding: 8px; color: var(--secondary-text-color); }
 .title { font-size: 1.1em; font-weight: 500; margin-bottom: 8px; }
