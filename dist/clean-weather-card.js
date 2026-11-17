@@ -313,6 +313,8 @@ const ICONS = {
 
 /** Hourly columns can also show "temperature + feels like". */
 const HOURLY_ATTRIBUTES = ["temperature", "temperature_feels", ...ATTRIBUTES.slice(1)];
+/** Attributes of the current weather that can be overridden by a user sensor (`<attribute>_sensor`). */
+const SENSOR_KEYS = ["temperature", "precipitation", "humidity", "wind_speed", "wind_gust_speed", "wind_bearing", "pressure", "dew_point", "uv_index", "visibility", "cloud_coverage"];
 const DAILY_ATTRIBUTES = ATTRIBUTES.filter((a) => a !== "temperature");
 /** Shortcuts show the current state: no temperature (shown large already) and no precipitation amount. */
 const SHORTCUT_ATTRIBUTES = DAILY_ATTRIBUTES.filter((a) => a !== "precipitation");
@@ -380,6 +382,37 @@ function toMm(v, unit) {
   if (u === "in") return v * 25.4;
   if (u === "cm") return v * 10;
   return v;
+}
+
+/** Temperature between units (°C, °F, K). */
+function convertTemp(v, from, to) {
+  const f = String(from || "").toUpperCase();
+  const c = f.includes("F") ? ((v - 32) * 5) / 9 : f === "K" ? v - 273.15 : v;
+  return String(to || "").toUpperCase().includes("F") ? (c * 9) / 5 + 32 : c;
+}
+
+/** Unit factors to a base unit (km/h, hPa, km); unknown units leave the value unchanged. */
+const WIND_UNITS = { "km/h": 1, "m/s": 3.6, mph: 1.609344, kn: 1.852, kt: 1.852, "ft/s": 1.09728 };
+const PRESSURE_UNITS = { pa: 0.01, hpa: 1, mbar: 1, kpa: 10, bar: 1000, mmhg: 1.33322, inhg: 33.8639, psi: 68.9476 };
+const DISTANCE_UNITS = { km: 1, m: 0.001, mi: 1.609344, ft: 0.0003048, yd: 0.0009144 };
+function convertUnits(v, table, from, to) {
+  const k = (u) => table[String(u || "").toLowerCase()];
+  const f = k(from);
+  const t = k(to);
+  return f !== undefined && t !== undefined ? (v * f) / t : v;
+}
+
+/** Current rain rate (mm/h) of a user sensor; running totals (daily / lifetime counters) are not usable. */
+function sensorRainMm(st) {
+  if (!st) return null;
+  const sc = st.attributes?.state_class;
+  if (sc === "total" || sc === "total_increasing") return null;
+  const v = num(st.state);
+  if (v === null) return null;
+  const unit = String(st.attributes?.unit_of_measurement || "mm/h").toLowerCase();
+  const base = unit.split("/")[0];
+  const mm = base === "in" ? v * 25.4 : base === "cm" ? v * 10 : v;
+  return unit.includes("/d") ? mm / 24 : mm;
 }
 
 /** Feels-like temperature: windchill (cold), heat index (hot), else T. */
@@ -533,7 +566,7 @@ function attrFormatRaw(key, v, ctx) {
     case "humidity":
     case "cloud_coverage": return `${rnd(v)}${u("%")}`;
     case "uv_index": return `${rnd(v)}`;
-    case "pressure": return `${rnd(v)}${u(" " + ctx.presu)}`;
+    case "pressure": return `${/inhg|psi|bar$/i.test(ctx.presu) && !/mbar/i.test(ctx.presu) ? v.toFixed(2) : rnd(v)}${u(" " + ctx.presu)}`; // small-valued units need decimals
     case "visibility": return `${rnd(v)}${u(" " + ctx.visu)}`;
     default: return `${v}`;
   }
@@ -598,7 +631,8 @@ class CleanWeatherCard extends HTMLElement {
       wind: opt(d.wind, ["icon", "value", "gust", "none"], "icon"),
       attributes: normalizeAttributes(config.daily),
     };
-    this._config = { entity: config.entity, title: config.title || "", icon_size: clamp(Math.round(num(config.icon_size) ?? DEFAULTS.icon_size), 20, 100), shortcuts_display: oneOf(config.shortcuts_display, ["icon", "icon_label", "label"], "icon"), shortcuts: normalizeList(config.shortcuts, SHORTCUT_ATTRIBUTES, DEFAULTS.shortcuts), hourly, daily };
+    const sensors = Object.fromEntries(SENSOR_KEYS.map((k) => [`${k}_sensor`, typeof config[`${k}_sensor`] === "string" && config[`${k}_sensor`].includes(".") ? config[`${k}_sensor`] : ""]));
+    this._config = { entity: config.entity, title: config.title || "", ...sensors, icon_size: clamp(Math.round(num(config.icon_size) ?? DEFAULTS.icon_size), 20, 100), shortcuts_display: oneOf(config.shortcuts_display, ["icon", "icon_label", "label"], "icon"), shortcuts: normalizeList(config.shortcuts, SHORTCUT_ATTRIBUTES, DEFAULTS.shortcuts), hourly, daily };
     this._ensureSubscribed(true);
     this._render();
   }
@@ -607,10 +641,16 @@ class CleanWeatherCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
     const st = hass.states[this._config.entity];
+    // the optional override sensors also trigger a re-render when they change
+    const sensors = SENSOR_KEYS.map((k) => (this._config[`${k}_sensor`] ? hass.states[this._config[`${k}_sensor`]] : null));
+    const sensorsChanged = sensors.some((x, i) => x !== (this._sensorStates || [])[i]);
+    this._sensorStates = sensors;
     if (st !== this._stateObj) {
       const first = !this._stateObj;
       this._stateObj = st;
       this._ensureSubscribed(first);
+      this._render();
+    } else if (sensorsChanged && st) {
       this._render();
     }
   }
@@ -771,16 +811,29 @@ class CleanWeatherCard extends HTMLElement {
     const cur = hourly.find((h) => Math.abs(new Date(h.datetime) - now) <= 30 * 60 * 1000) ||
       hourly.find((h) => new Date(h.datetime) <= now && now - new Date(h.datetime) < 3600e3);
 
-    const temp = num(a.temperature);
-    const wind = num(a.wind_speed);
+    // Optional user sensors (<attribute>_sensor) override the current values, converted to the weather entity's units
+    const sensorState = (key) => {
+      const e = cfg[`${key}_sensor`];
+      return e ? hass.states[e] || null : null;
+    };
+    const sens = (key, conv) => {
+      const st = sensorState(key);
+      const v = st ? num(st.state) : null;
+      return v === null ? null : conv ? conv(v, st.attributes?.unit_of_measurement) : v;
+    };
+    const tSensor = sens("temperature", (v, u) => convertTemp(v, u, ctx.tu));
+    const temp = tSensor ?? num(a.temperature);
+    const sensorMm = sensorRainMm(sensorState("precipitation"));
+    const wind = sens("wind_speed", (v, u) => convertUnits(v, WIND_UNITS, u, ctx.wu)) ?? num(a.wind_speed);
     const windKmh = toKmh(wind, ctx.wu);
-    const gust = num(a.wind_gust_speed) ?? num(cur?.wind_gust_speed);
+    const gust = sens("wind_gust_speed", (v, u) => convertUnits(v, WIND_UNITS, u, ctx.wu)) ?? num(a.wind_gust_speed) ?? num(cur?.wind_gust_speed);
     const gustKmh = toKmh(gust, ctx.wu);
-    const humidity = num(a.humidity);
-    const bearing = bearingDeg(a.wind_bearing ?? cur?.wind_bearing);
+    const humidity = sens("humidity") ?? num(a.humidity);
+    const bearing = bearingDeg(sens("wind_bearing") ?? a.wind_bearing ?? cur?.wind_bearing);
 
     let feels = null;
-    if (temp !== null) feels = num(a.apparent_temperature) ?? feelsLike(temp, windKmh, humidity, ctx.tu);
+    // with a temperature sensor the weather entity's own feels-like no longer fits: compute it from the sensor value
+    if (temp !== null) feels = (tSensor !== null ? null : num(a.apparent_temperature)) ?? feelsLike(temp, windKmh, humidity, ctx.tu);
 
     const curMm = num(cur?.precipitation);
     const current = {
@@ -796,7 +849,7 @@ class CleanWeatherCard extends HTMLElement {
       bearingName: bearing === null ? "" : names[Math.round(bearing / 22.5) % 16],
       gust,
       showGust: gust !== null && gustKmh !== null && windKmh !== null && (gustKmh >= 40 || gustKmh >= 1.5 * windKmh),
-      mm: toMm(curMm, ctx.pu),
+      mm: sensorMm !== null ? sensorMm : toMm(curMm, ctx.pu),
     };
 
     // Hourly columns
@@ -927,7 +980,14 @@ class CleanWeatherCard extends HTMLElement {
           const v = num(cur?.precipitation_probability);
           return v === null ? null : Math.round(v / 5) * 5;
         }
-        default: return num(a[key]) ?? num(cur?.[key]);
+        default: {
+          const conv = {
+            pressure: (v, u) => convertUnits(v, PRESSURE_UNITS, u, ctx.presu),
+            dew_point: (v, u) => convertTemp(v, u, ctx.tu),
+            visibility: (v, u) => convertUnits(v, DISTANCE_UNITS, u, ctx.visu),
+          }[key];
+          return sens(key, conv) ?? num(a[key]) ?? num(cur?.[key]);
+        }
       }
     };
     const shortcuts = cfg.shortcuts.map((key) => ({
@@ -1237,7 +1297,23 @@ ha-icon { color: inherit; display:inline-flex; align-items:center; justify-conte
 /* Visual editor                                                       */
 /* ------------------------------------------------------------------ */
 
+const EDITOR_HELPERS = {
+  temperature_sensor: "Replaces the current temperature (and the computed feels-like), e.g. your outdoor sensor.",
+  precipitation_sensor: "Rain rate (mm/h) or last-hour amount. Sets the drops of the current weather icon. Running totals are ignored.",
+};
+
 const EDITOR_LABELS = {
+  temperature_sensor: "Temperature sensor",
+  precipitation_sensor: "Rain sensor",
+  humidity_sensor: "Humidity sensor",
+  wind_speed_sensor: "Wind speed sensor",
+  wind_gust_speed_sensor: "Wind gust sensor",
+  wind_bearing_sensor: "Wind direction sensor",
+  pressure_sensor: "Pressure sensor",
+  dew_point_sensor: "Dew point sensor",
+  uv_index_sensor: "UV index sensor",
+  visibility_sensor: "Visibility sensor",
+  cloud_coverage_sensor: "Cloud cover sensor",
   entity: "Weather entity",
   title: "Title (optional)",
   enabled: "Enabled",
@@ -1288,6 +1364,21 @@ const EDITOR_SCHEMA = [
       { name: "entity", required: true, selector: { entity: { domain: "weather" } } },
       { name: "title", selector: { text: {} } },
       slider("icon_size", 20, 100),
+    ],
+  },
+  {
+    type: "expandable", name: "", title: "Sensors (optional)", icon: "mdi:gauge", schema: [
+      { name: "temperature_sensor", selector: { entity: { domain: "sensor", device_class: "temperature" } } },
+      { name: "precipitation_sensor", selector: { entity: { domain: "sensor", device_class: ["precipitation", "precipitation_intensity"] } } },
+      { name: "humidity_sensor", selector: { entity: { domain: "sensor", device_class: "humidity" } } },
+      { name: "wind_speed_sensor", selector: { entity: { domain: "sensor", device_class: "wind_speed" } } },
+      { name: "wind_gust_speed_sensor", selector: { entity: { domain: "sensor", device_class: "wind_speed" } } },
+      { name: "wind_bearing_sensor", selector: { entity: { domain: "sensor" } } },
+      { name: "pressure_sensor", selector: { entity: { domain: "sensor", device_class: ["pressure", "atmospheric_pressure"] } } },
+      { name: "dew_point_sensor", selector: { entity: { domain: "sensor", device_class: "temperature" } } },
+      { name: "uv_index_sensor", selector: { entity: { domain: "sensor" } } },
+      { name: "visibility_sensor", selector: { entity: { domain: "sensor", device_class: "distance" } } },
+      { name: "cloud_coverage_sensor", selector: { entity: { domain: "sensor" } } },
     ],
   },
   {
@@ -1358,6 +1449,7 @@ class CleanWeatherCardEditor extends HTMLElement {
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
+      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name] || "";
       this._form.addEventListener("value-changed", (ev) => {
         const config = { ...ev.detail.value };
         // An emptied (cleared) option means "disabled"; the default only applies to options that were never set.

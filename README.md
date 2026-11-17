@@ -53,6 +53,8 @@ Add the card from the UI (the visual editor has a section per area) or in YAML:
 type: custom:clean-weather-card
 entity: weather.munchen_stadt_dwd2
 title: ""
+# temperature_sensor: sensor.outdoor_temperature
+# precipitation_sensor: sensor.rain_rate
 icon_size: 96
 shortcuts_display: icon
 shortcuts:
@@ -86,6 +88,27 @@ daily:
 | `entity` | required | Any `weather.*` entity. |
 | `title` | none | Optional title. |
 | `icon_size` | `96` | Size of the main icon in the header in px (20 to 100). |
+
+### Sensors (optional)
+
+Your own `sensor.*` entities can replace the *current* values of the weather entity (the header and the shortcuts; the forecasts are unchanged). Units are converted to the units of the weather entity. If a sensor is unavailable, the card falls back to the weather entity. A sensor update refreshes the card immediately.
+
+| Option | Replaces | Notes |
+|---|---|---|
+| `temperature_sensor` | current temperature | e.g. your outdoor sensor (°C, °F, K). The feels-like value is then computed from it. |
+| `precipitation_sensor` | rain level of the current icon | Rain **rate** (`mm/h`) or the amount of the last hour. Same scale as the hourly columns. Running totals (`state_class: total` / `total_increasing`, e.g. rain today) are ignored. |
+| `humidity_sensor` | humidity | also used for the computed feels-like |
+| `wind_speed_sensor` | wind speed | km/h, m/s, mph, kn |
+| `wind_gust_speed_sensor` | wind gusts | |
+| `wind_bearing_sensor` | wind direction | degrees |
+| `pressure_sensor` | pressure | hPa, Pa, kPa, bar, mmHg, inHg, psi |
+| `dew_point_sensor` | dew point | |
+| `uv_index_sensor` | UV index | |
+| `visibility_sensor` | visibility | km, m, mi, ft |
+| `cloud_coverage_sensor` | cloud cover | % |
+
+In the editor, the pickers only list sensors with a matching device class; a sensor without one can be entered in YAML.
+
 
 ### `shortcuts`
 
