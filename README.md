@@ -37,8 +37,9 @@ Requires Home Assistant 2023.12 or newer.
 ### Marketplace (Home Assistant 2026.11+)
 
 1. Open the Marketplace (previously HACS) and search for *Clean Weather Card*.
-   Until it is in the catalog, add `https://github.com/bwalter/ha-clean-weather-card` as a custom repository of type *Dashboard*.
 2. Install it and reload the browser. The resource is registered automatically.
+
+On Home Assistant 2026.10 or older, install HACS and search for the card there.
 
 ### Manual
 

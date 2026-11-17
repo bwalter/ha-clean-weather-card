@@ -820,10 +820,16 @@ class CleanWeatherCard extends HTMLElement {
         const v = attrValue(key, entry, ctx);
         return v === null ? null : attrFormat(key, v, ctx);
       };
+      // Rain of the column: average hourly amount over the hours it covers (so a 2 h column is not under-counted)
+      const covered = hourly
+        .filter((x) => { const t = new Date(x.datetime).getTime(); return t >= at.getTime() - 1800e3 && t < at.getTime() + h.interval * 3600e3 - 1800e3; })
+        .map((x) => num(x.precipitation))
+        .filter((v) => v !== null);
+      const hourMm = covered.length ? covered.reduce((a, b) => a + b, 0) / covered.length : null;
       cols.push({
         label,
         cond: entry ? entry.condition || "unknown" : "unknown",
-        mm: entry ? toMm(num(entry.precipitation), ctx.pu) : null,
+        mm: entry && hourMm !== null ? toMm(hourMm, ctx.pu) : null,
         night: this._isNight(at),
         loading: this._hourly === null,
         missing: !entry,
